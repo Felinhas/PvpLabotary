@@ -1,18 +1,339 @@
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
+local VIM = game:GetService("VirtualInputManager")
+
+local player = Players.LocalPlayer
+
+local function getChar()
+    return player.Character or player.CharacterAdded:Wait()
+end
+
+local function makeDraggable(frame)
+    local dragging = false
+    local dragStart, startPos
+
+    frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then
+                    dragging = false
+                end
+            end)
+        end
+    end)
+
+    UIS.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+end
+
+local ativo = true
+local part
+
+local function criarPlataforma()
+    local char = getChar()
+    local hrp = char:WaitForChild("HumanoidRootPart")
+
+    if part then part:Destroy() end
+    part = Instance.new("Part")
+    part.Size = Vector3.new(300, 2, 300)
+    part.Anchored = true
+    part.Transparency = 0.9
+    part.Position = hrp.Position - Vector3.new(0, 3, 0)
+    part.Parent = workspace
+end
+
+local function removerPlataforma()
+    if part then part:Destroy() part = nil end
+end
+
+criarPlataforma()
+
+local gui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+gui.ResetOnSpawn = false
+
+local holder = Instance.new("Frame", gui)
+holder.Size = UDim2.new(0,130,0,130)
+holder.Position = UDim2.new(0.3,0,0.5,-65)
+holder.BackgroundTransparency = 1
+Instance.new("UICorner", holder).CornerRadius = UDim.new(1,0)
+
+local stroke = Instance.new("UIStroke", holder)
+stroke.Thickness = 4
+
+local botao = Instance.new("TextButton", holder)
+botao.Size = UDim2.new(1,-10,1,-10)
+botao.Position = UDim2.new(0,5,0,5)
+botao.Text = "DES. ATIV."
+botao.TextScaled = true
+botao.BackgroundColor3 = Color3.fromRGB(120,120,120)
+botao.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", botao).CornerRadius = UDim.new(1,0)
+
+makeDraggable(holder)
+
+task.spawn(function()
+    local hue = 0
+    while true do
+        hue += 0.02
+        if hue > 1 then hue = 0 end
+        stroke.Color = Color3.fromHSV(hue,1,1)
+        task.wait(0.02)
+    end
+end)
+
+botao.MouseButton1Click:Connect(function()
+    ativo = not ativo
+    if ativo then criarPlataforma() else removerPlataforma() end
+end)
+
+local function isValidTarget(char)
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+
+    if not hum or not hrp then return false end
+    if hum.Health <= 0 then return false end
+    if hum.Sit then return false end
+    if hum.PlatformStand then return false end
+
+    local state = hum:GetState()
+    if state == Enum.HumanoidStateType.Physics
+    or state == Enum.HumanoidStateType.Ragdoll
+    or state == Enum.HumanoidStateType.FallingDown
+    or state == Enum.HumanoidStateType.GettingUp then
+        return false
+    end
+
+    return true
+end
+
+local function getClosestPlayer()
+    local char = getChar()
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return nil end
+
+    local closest, dist = nil, math.huge
+
+    for _, v in pairs(Players:GetPlayers()) do
+        if v ~= player and v.Character and isValidTarget(v.Character) then
+            local targetHRP = v.Character:FindFirstChild("HumanoidRootPart")
+            if targetHRP then
+                local d = (hrp.Position - targetHRP.Position).Magnitude
+                if d < dist then
+                    dist = d
+                    closest = v
+                end
+            end
+        end
+    end
+
+    return closest
+end
+
+local autoWin = false
+local spinAtivo = false
+local spinSpeed = 50
+
+local protect = false
+local savedPos = nil
+local loopReset = false
+local antiRagdoll = false -- Variável para Anti Ragdoll e Anti Deitado
+
+RunService.Heartbeat:Connect(function()
+    local char = getChar()
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp or not hum then return end
+
+    if autoWin then
+        local target = getClosestPlayer()
+        if target and target.Character then
+            local enemyHRP = target.Character:FindFirstChild("HumanoidRootPart")
+            if enemyHRP then
+                local behindCF = enemyHRP.CFrame * CFrame.new(0, 0, 2)
+                hrp.CFrame = hrp.CFrame:Lerp(
+                    CFrame.new(behindCF.Position, enemyHRP.Position),
+                    0.6
+                )
+
+                for i = 1,3 do
+                    VIM:SendMouseButtonEvent(0,0,0,true,game,0)
+                    VIM:SendMouseButtonEvent(0,0,0,false,game,0)
+                end
+            end
+        end
+    end
+
+    if spinAtivo then
+        hrp.CFrame = hrp.CFrame * CFrame.Angles(0, math.rad(spinSpeed), 0)
+    end
+
+    if protect then
+        hrp.Velocity = Vector3.new(0,0,0)
+    end
+    
+    -- Anti Ragdoll e Anti Deitado (Sentado)
+    if antiRagdoll then
+        local humanoidState = hum:GetState()
+        
+        -- Anti Ragdoll: impede estados de ragdoll, física e queda
+        if humanoidState == Enum.HumanoidStateType.Physics 
+        or humanoidState == Enum.HumanoidStateType.Ragdoll 
+        or humanoidState == Enum.HumanoidStateType.FallingDown 
+        or humanoidState == Enum.HumanoidStateType.GettingUp then
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end
+        
+        -- Anti Deitado: impede que o personagem fique sentado/deitado
+        if hum.Sit or hum.PlatformStand then
+            hum.Sit = false
+            hum.PlatformStand = false
+            hum:ChangeState(Enum.HumanoidStateType.Running)
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        if loopReset then
+            local hum = getChar():FindFirstChildOfClass("Humanoid")
+            if hum then hum.Health = 0 end
+        end
+        task.wait(3)
+    end
+end)
+
+local gui2 = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+gui2.ResetOnSpawn = false
+
+local frame = Instance.new("Frame", gui2)
+frame.Size = UDim2.new(0,340,0,260) -- Aumentei a altura para acomodar o novo botão
+frame.Position = UDim2.new(0.55,0,0.5,-130)
+frame.BackgroundColor3 = Color3.fromRGB(0,0,0)
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
+
+local stroke2 = Instance.new("UIStroke", frame)
+stroke2.Color = Color3.fromRGB(0,170,255)
+stroke2.Thickness = 3
+
+makeDraggable(frame)
+
+local function criarBotao(texto, posY)
+    local b = Instance.new("TextButton", frame)
+    b.Size = UDim2.new(0,120,0,40)
+    b.Position = UDim2.new(0,10,0,posY)
+    b.Text = texto
+    b.TextScaled = true
+    b.BackgroundColor3 = Color3.fromRGB(20,20,20)
+    b.TextColor3 = Color3.new(1,1,1)
+    Instance.new("UICorner", b)
+    return b
+end
+
+local btnAuto = criarBotao("AutoWin: OFF",10)
+local btnSpin = criarBotao("SpinBot: OFF",60)
+local btnProtect = criarBotao("Protect: OFF",110)
+local btnReset = criarBotao("Reset PvP",160)
+local btnAntiRagdoll = criarBotao("Anti Ragdoll/Deitado: OFF",210) -- Novo botão Anti Ragdoll
+
+local btnLoop = Instance.new("TextButton", frame)
+btnLoop.Size = UDim2.new(0,120,0,40)
+btnLoop.Position = UDim2.new(1,-130,0,210)
+btnLoop.Text = "Loop Reset: OFF"
+btnLoop.TextScaled = true
+btnLoop.BackgroundColor3 = Color3.fromRGB(20,20,20)
+btnLoop.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", btnLoop)
+
+btnAuto.MouseButton1Click:Connect(function()
+    autoWin = not autoWin
+    btnAuto.Text = "AutoWin: " .. (autoWin and "ON" or "OFF")
+end)
+
+btnSpin.MouseButton1Click:Connect(function()
+    spinAtivo = not spinAtivo
+    btnSpin.Text = "SpinBot: " .. (spinAtivo and "ON" or "OFF")
+end)
+
+btnProtect.MouseButton1Click:Connect(function()
+    protect = not protect
+    btnProtect.Text = "Protect: " .. (protect and "ON" or "OFF")
+
+    local hrp = getChar():FindFirstChild("HumanoidRootPart")
+
+    if protect then
+        savedPos = hrp.Position
+        hrp.CFrame = hrp.CFrame + Vector3.new(0,150,0)
+    else
+        if savedPos then
+            TweenService:Create(hrp, TweenInfo.new(1), {CFrame = CFrame.new(savedPos)}):Play()
+        end
+    end
+end)
+
+btnReset.MouseButton1Click:Connect(function()
+    local hum = getChar():FindFirstChildOfClass("Humanoid")
+    if hum then hum.Health = 0 end
+end)
+
+btnLoop.MouseButton1Click:Connect(function()
+    loopReset = not loopReset
+    btnLoop.Text = "Loop Reset: " .. (loopReset and "ON" or "OFF")
+end)
 
 
-local player = game:GetService("Players").LocalPlayer
-local character = player.Character or player.CharacterAdded:Wait()
-local hrp = character:WaitForChild("HumanoidRootPart")
+btnAntiRagdoll.MouseButton1Click:Connect(function()
+    antiRagdoll = not antiRagdoll
+    btnAntiRagdoll.Text = "Anti Ragdoll " .. (antiRagdoll and "ON" or "OFF")
+    
+    -- Se ativado, remove imediatamente qualquer estado de ragdoll ou sentado
+    if antiRagdoll then
+        local hum = getChar():FindFirstChildOfClass("Humanoid")
+        if hum then
+            local humanoidState = hum:GetState()
+            if humanoidState == Enum.HumanoidStateType.Physics 
+            or humanoidState == Enum.HumanoidStateType.Ragdoll 
+            or humanoidState == Enum.HumanoidStateType.FallingDown 
+            or humanoidState == Enum.HumanoidStateType.GettingUp then
+                hum:ChangeState(Enum.HumanoidStateType.Running)
+            end
+            if hum.Sit or hum.PlatformStand then
+                hum.Sit = false
+                hum.PlatformStand = false
+            end
+        end
+    end
+end)
 
+local box = Instance.new("TextBox", frame)
+box.Size = UDim2.new(0,120,0,40)
+box.Position = UDim2.new(1,-130,0,110)
+box.PlaceholderText = "Speed (max 150)"
+box.TextScaled = true
+box.BackgroundColor3 = Color3.fromRGB(20,20,20)
+box.TextColor3 = Color3.new(1,1,1)
+Instance.new("UICorner", box)
 
-local part = Instance.new("Part")
-part.Size = Vector3.new(300, 2, 300) -- 300x300
-part.Anchored = true
-part.Transparency = 0.9
-part.Color = Color3.fromRGB(255, 255, 255)
-part.Material = Enum.Material.SmoothPlastic
-part.Name = "PlataformaInvisible"
-
-part.Position = hrp.Position - Vector3.new(0, 3, 0)
-
-part.Parent = workspace
+box.FocusLost:Connect(function()
+    local num = tonumber(box.Text)
+    if num then
+        spinSpeed = math.clamp(num,0,150)
+        box.Text = tostring(spinSpeed)
+    else
+        box.Text = ""
+    end
+end)
